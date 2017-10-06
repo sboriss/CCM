@@ -1,0 +1,1199 @@
+---
+title: "Nowcasting US GDP in Real Time..."
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.path = 'figures/', echo = FALSE, warning = FALSE, message = FALSE)
+
+
+cat("\014")  # clear console
+rm(list=ls(all=TRUE))
+
+library(openxlsx)
+library(tempdisagg)
+library(tfplot)
+library(bcp)
+library(colorspace)
+library(xtable)
+library(vioplot)
+
+fcstBeg = c(1985,1)
+fcstEnd = c(2011,3)
+
+fo      = c( 'FO1', 'FO2', 'FO3', 'FO4' )
+
+dateNBER = c( seq( 1990.5, 1991.25, 0.25), seq( 2001.25, 2001.75, 0.25), seq(2007.25, 2009.50, 0.25) )
+
+tsFcstSpan = ts( NA, start = fcstBeg, end = fcstEnd, freq = 4 )
+indxNBER = sapply( dateNBER, function( tmp ) which( tmp == time( tsFcstSpan ) ) ) 
+
+length( tsFcstSpan )
+
+
+### functions -----------
+
+funcBCP <- function( y0, sTitle, sPlaceLegend, chNBER ){
+
+    op1 <- par(mfrow=c(2,1),col.lab="black",col.main="black")
+    
+    y  <- c(y0)
+    oBCP <- bcp(y)
+    mBCP <- cbind(y, summary(oBCP))
+    if(any(is.na(y0))) mBCP <- rbind(matrix(NA, nrow = h, ncol = 3),mBCP)
+    tsBCP <- ts(mBCP, start = start(y0), freq = 4) 
+    
+    op2 <- par(mar=c(0,2,2,2), cex.axis=0.75) 
+    post = tsBCP[,"X1"]
+    actl = tsBCP[,"y"]
+    
+    ylim = c(min(na.omit(actl)),max(na.omit(actl)))
+    
+    plot( ts(0, start = start(y0), end = end(y0), frequency = frequency( y0 ) ), 
+            mgp = c(3, 1, 0), ylim = ylim, col = "black",xaxt="n", ylab = "", main = sTitle )
+    
+    if(chNBER){
+      polygon(x=c(1990.50,1990.50, 1991.25,1991.25), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+      polygon(x=c(2001.25,2001.25, 2001.75,2001.75), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+      polygon(x=c(2007.25,2007.25, 2009.50,2009.50), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    }
+    
+    lines(post, type = "l", lwd = 2 )
+    lines(actl, type = "p", pch = 16, col = "red")
+    abline(h = 0)
+    tfplot:::tfXaxis(post)
+    
+    #legend(sPlaceLegend,c("CSSFED","Post.mean"), col = c("red","black"), lwd = 2, bty = "n")
+    par(op2)
+    op2 <- par(mar=c(2,2,0,2), cex.axis=0.75) 
+    prob = tsBCP[,"Probability"]
+    plot(prob, type = "l", lwd = 2, mgp = c(3, 1, 0),xaxt="n", ylab = "")
+    #legend(start(prob)[1],0.9,c("Post. prob."), col = c("black"),bty = "n", lwd = 2)
+    tfplot:::tfXaxis(prob)
+    par(op2)
+    
+    par(op1)  
+  
+}
+
+readCSV <- function( sFile ) {
+  out <- tryCatch(
+    {
+      # Just to highlight: if you want to use more than one 
+      # R expression in the "try" part then you'll have to 
+      # use curly brackets.
+      # 'tryCatch()' will return the last evaluated expression 
+      # in case the "try" part was completed successfully
+      
+      message("This is the 'try' part")
+      
+      read.csv( sFile )
+      # The return value of `readLines()` is the actual value 
+      # that will be returned in case there is no condition 
+      # (e.g. warning or error). 
+      # You don't need to state the return value via `return()` as code 
+      # in the "try" part is not wrapped insided a function (unlike that
+      # for the condition handlers for warnings and error below)
+    },
+    error=function(cond) {
+      message(paste("CSV does not seem to exist:", sFile))
+      message("Here's the original error message:")
+      message(cond)
+      # Choose a return value in case of error
+      return(NA)
+      # },
+      # warning=function(cond) {
+      #   message(paste("CSV caused a warning:", sFile))
+      #   message("Here's the original warning message:")
+      #   message(cond)
+      #   # Choose a return value in case of warning
+      #   return(NULL)
+    },
+    finally={
+      # NOTE:
+      # Here goes everything that should be executed at the end,
+      # regardless of success or error.
+      # If you want more than one expression to be executed, then you 
+      # need to wrap them in curly brackets ({...}); otherwise you could
+      # just have written 'finally=<expression>' 
+      message(paste("Processed CSV:", sFile))
+      message("Some other message at the end")
+    }
+  )    
+  return(out)
+}
+
+funcGetRMSFE <- function( fo, tempIN, chSelect ){ # tempIN = list_bnch_off[[1]]# chSelect = "ALLE"
+
+  pth <- tempIN[1]
+  mdl <- tempIN[2]
+  pri <- tempIN[3]
+  svo <- tempIN[4]
+
+  sapply( fo, function( j_fo ){ # j_fo = fo[1]
+  
+    #fcst_summ <- read.csv( paste0( pth, 'FcstSummary_MODEL-',mdl,'_',pri,'_',svo,'_',j_fo,'.csv' ) )  
+    
+    j_fo_in = ifelse( j_fo != 'FO1' & (mdl == "UNI-AR0" | mdl == "UNI-AR2"), "FO4", j_fo ) # j_fo_in = 
+    
+    sFile     <- paste0( pth, 'FcstSummary_MODEL-',mdl,'_',pri,'_',svo,'_',j_fo_in,'.csv' )
+    fcst_summ <- readCSV( sFile );  
+
+    if( chSelect == "ALLE" ) rmsfe = ifelse( any( is.na(fcst_summ) ), NA, sqrt( mean( fcst_summ[          , 'fcstErroMedian']^2 ) ) )
+    if( chSelect == "BOOM" ) rmsfe = ifelse( any( is.na(fcst_summ) ), NA, sqrt( mean( fcst_summ[ -indxNBER, 'fcstErroMedian']^2 ) ) )
+    if( chSelect == "BUST" ) rmsfe = ifelse( any( is.na(fcst_summ) ), NA, sqrt( mean( fcst_summ[  indxNBER, 'fcstErroMedian']^2 ) ) )
+    
+    rmsfe
+    
+  })
+
+}
+
+funcGetCSSFED <- function( list_pair, chBnch ){ # list_pair = list_bnch_off
+
+      mdl1st <- list_pair[[1]]
+      mdl2nd <- list_pair[[2]]
+      
+      path1st <- mdl1st[1] 
+      name1st <- mdl1st[2]
+      prio1st <- mdl1st[3]
+      stvo1st <- mdl1st[4]
+      
+      path2nd <- mdl2nd[1] 
+      name2nd <- mdl2nd[2]
+      prio2nd <- mdl2nd[3]
+      stvo2nd <- mdl2nd[4]
+      
+      cssfed_fo <- sapply( fo, function( j_fo ){ #        j_fo = fo[1]
+        
+        j_fo_in1 = ifelse( j_fo != 'FO1' & (name1st == "UNI-AR0" | name1st == "UNI-AR2"), "FO4", j_fo )
+        j_fo_in2 = ifelse( j_fo != 'FO1' & (name2nd == "UNI-AR0" | name2nd == "UNI-AR2"), "FO4", j_fo )
+        
+        sFile1st = paste0( path1st, 'FcstSummary_MODEL-',name1st,'_',prio1st,'_',stvo1st,'_',j_fo_in1,'.csv' )
+        sFile2nd = paste0( path2nd, 'FcstSummary_MODEL-',name2nd,'_',prio2nd,'_',stvo2nd,'_',j_fo_in2,'.csv' )
+        
+        fcst_summ_1st <- readCSV( sFile1st ); 
+        fcst_summ_2nd <- readCSV( sFile2nd );
+        
+        if( any( is.na(fcst_summ_1st) ) | any( is.na(fcst_summ_2nd) ) ){
+            
+          fcst_erro_1st = rep( NA, length( tsFcstSpan ) )
+          fcst_erro_2nd = rep( NA, length( tsFcstSpan ) )
+          
+        }  
+        else{
+        
+          fcst_erro_1st <- fcst_summ_1st[ , 'fcstErroMedian']
+          fcst_erro_2nd <- fcst_summ_2nd[ , 'fcstErroMedian'] 
+        
+        }
+        
+        if(chBnch == '1st2nd' ) cssfed = cumsum( fcst_erro_1st^2 - fcst_erro_2nd^2 )
+        if(chBnch == '2nd1st' ) cssfed = cumsum( fcst_erro_2nd^2 - fcst_erro_1st^2 )
+      
+        cssfed
+      })
+      cssfed_fo <- ts( cssfed_fo, start = fcstBeg, freq = 4 )
+      colnames( cssfed_fo ) = fo
+      cssfed_fo
+}
+
+funcDrawCSSFED <- function( CSSFED, chPutLegend, sTitle ){
+  
+    tsZero <- ts( 0, start = fcstBeg, end = fcstEnd, freq = 4 )
+    ylim = range(  na.omit( t( CSSFED ) ) )
+    col  = seq( colnames(CSSFED) ); names( col  ) = colnames(CSSFED)
+      
+    plot( tsZero, ylim = ylim, ylab = '', main = sTitle )
+    
+    polygon(x=c(1990.50,1990.50, 1991.25,1991.25), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    polygon(x=c(2001.25,2001.25, 2001.75,2001.75), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    polygon(x=c(2007.25,2007.25, 2009.50,2009.50), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    
+    lines( tsZero )
+    for( i in colnames(CSSFED) ) lines( CSSFED[, i], lwd = 2, col = col[ i ] )
+    
+    legend( chPutLegend, colnames(CSSFED), lty = 1, lwd = 2, cex = 0.6, col = col)
+}
+
+funcGetmLnPS <- function( fo, tempIN, chSelect ){ # tempIN = list_bnch_off[[1]]# chSelect = "ALLE"
+
+  pth <- tempIN[1]
+  mdl <- tempIN[2]
+  pri <- tempIN[3]
+  svo <- tempIN[4]
+
+  sapply( fo, function( j_fo ){ # j_fo = fo[1]
+  
+    j_fo_in = ifelse( j_fo != 'FO1' & (mdl == "UNI-AR0" | mdl == "UNI-AR2"), "FO4", j_fo )
+    
+    sFile     <- paste0( pth, 'FcstSummary_MODEL-',mdl,'_',pri,'_',svo,'_',j_fo_in,'.csv' )
+    fcst_summ <- readCSV( sFile );  
+
+    #fcst_summ <- read.csv( paste0( pth, 'FcstSummary_MODEL-',mdl,'_',pri,'_',svo,'_',j_fo,'.csv' ) )  
+    
+    if( chSelect == "ALLE" ) mLnPS = ifelse( any( is.na(fcst_summ) ), NA, mean( log( fcst_summ[          , 'probScore'] ) ) )
+    if( chSelect == "BOOM" ) mLnPS = ifelse( any( is.na(fcst_summ) ), NA, mean( log( fcst_summ[ -indxNBER, 'probScore'] ) ) )
+    if( chSelect == "BUST" ) mLnPS = ifelse( any( is.na(fcst_summ) ), NA, mean( log( fcst_summ[  indxNBER, 'probScore'] ) ) )
+    
+    mLnPS
+    
+  })
+
+}
+
+funcGetCSLNPSD <- function( list_pair, chBnch ){ # list_pair = list_bnch_off
+
+      mdl1st <- list_pair[[1]]
+      mdl2nd <- list_pair[[2]]
+      
+      path1st <- mdl1st[1] 
+      name1st <- mdl1st[2]
+      prio1st <- mdl1st[3]
+      stvo1st <- mdl1st[4]
+      
+      path2nd <- mdl2nd[1] 
+      name2nd <- mdl2nd[2]
+      prio2nd <- mdl2nd[3]
+      stvo2nd <- mdl2nd[4]
+      
+      cslnpsd_fo <- sapply( fo, function( j_fo ){ #        j_fo = fo[1]
+        
+     
+        j_fo_in1 = ifelse( j_fo != 'FO1' & (name1st == "UNI-AR0" | name1st == "UNI-AR2"), "FO4", j_fo )
+        j_fo_in2 = ifelse( j_fo != 'FO1' & (name2nd == "UNI-AR0" | name2nd == "UNI-AR2"), "FO4", j_fo )
+
+        
+        sFile1st = paste0( path1st, 'FcstSummary_MODEL-',name1st,'_',prio1st,'_',stvo1st,'_',j_fo_in1,'.csv' )
+        sFile2nd = paste0( path2nd, 'FcstSummary_MODEL-',name2nd,'_',prio2nd,'_',stvo2nd,'_',j_fo_in2,'.csv' )
+        
+        fcst_summ_1st <- readCSV( sFile1st ); 
+        fcst_summ_2nd <- readCSV( sFile2nd );
+        
+        if( any( is.na(fcst_summ_1st) ) | any( is.na(fcst_summ_2nd) ) ){
+            
+          fcst_prsc_1st = rep( NA, length( tsFcstSpan ) )
+          fcst_prsc_2nd = rep( NA, length( tsFcstSpan ) )
+          
+        }  
+        else{
+  
+        # fcst_summ_1st <- read.csv( paste0( path1st, 'FcstSummary_MODEL-',name1st,'_',prio1st,'_',stvo1st,'_',j_fo,'.csv' ) )  
+        # fcst_summ_2nd <- read.csv( paste0( path2nd, 'FcstSummary_MODEL-',name2nd,'_',prio2nd,'_',stvo2nd,'_',j_fo,'.csv' ) )  
+        
+          fcst_prsc_1st <- log( fcst_summ_1st[ , 'probScore'] )
+          fcst_prsc_2nd <- log( fcst_summ_2nd[ , 'probScore'] )
+        }
+        
+        if(chBnch == '1st2nd' ) cslnpsd = cumsum( fcst_prsc_1st - fcst_prsc_2nd )
+        if(chBnch == '2nd1st' ) cslnpsd = cumsum( fcst_prsc_2nd - fcst_prsc_1st )
+      
+        cslnpsd
+      })
+      cslnpsd_fo <- ts( cslnpsd_fo, start = fcstBeg, freq = 4 )
+      colnames( cslnpsd_fo ) = fo
+      cslnpsd_fo
+}
+
+funcDrawCSLNPSD <- function( CSLNPSD, chPutLegend, sTitle ){
+  
+    tsZero <- ts( 0, start = fcstBeg, end = fcstEnd, freq = 4 )
+    ylim = range(  na.omit( t( CSLNPSD ) ) ) 
+    col  = seq( colnames(CSLNPSD) ); names( col  ) = colnames(CSLNPSD)
+      
+    plot( tsZero, ylim = ylim, ylab = '', main = sTitle )
+    
+    polygon(x=c(1990.50,1990.50, 1991.25,1991.25), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    polygon(x=c(2001.25,2001.25, 2001.75,2001.75), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    polygon(x=c(2007.25,2007.25, 2009.50,2009.50), y=c( ylim, rev( ylim ) ), density=NA, col="gray", border=NA)
+    
+    lines( tsZero )
+    for( i in colnames(CSLNPSD) ) lines( CSLNPSD[, i], lwd = 2, col = col[ i ] )
+    
+    legend( chPutLegend, colnames(CSLNPSD), lty = 1, lwd = 2, cex = 0.6, col = col)
+}
+
+funcGetPredDraws <- function( fo, tempIN ){ # tempIN = list_ccm_off[[1]]; tempIN # chSelect = "ALLE"
+
+  pth <- tempIN[1]
+  mdl <- tempIN[2]
+  pri <- tempIN[3]
+  svo <- tempIN[4]
+
+  listPredDraws = lapply( fo, function( j_fo ){ # j_fo = fo[1]
+
+    j_fo_in = ifelse( j_fo != 'FO1' & (mdl == "UNI-AR0" | mdl == "UNI-AR2"), "FO4", j_fo ) # j_fo_in = 
+    
+    sFile     <- paste0( pth, 'tsPredDraws_MODEL-',mdl,'_',pri,'_',svo,'_',j_fo_in,'.csv' )
+    predDraws <- readCSV( sFile );  
+    predDraws
+    
+  })
+  
+  names( listPredDraws ) = fo
+  listPredDraws
+
+}
+###
+```
+
+
+# Data in CCM
+
+CCM consider the real-time vintages of the following variables gathered for the US economy: the quarterly GDP growth rate 
+as well as 12 monthly indicators: payroll employment (log-change), indistrual production (log-change), real retail sales (log-change), 
+housing starts (log-level), the ISM index (overall) for manufacturing (level), the ISM index for supplier delivery times (level), 
+the IS index for orders (level), average weekly hours of production and supervisory workers (log-change), new claims for unemployment
+insurance, S\&P500 index (log-change), the 10-year Treasury bond yield (level), and the 3-month Treasury bill rate (level). The first five 
+variables enter the small model whereas the large model incorporates all twelve of the variables.
+
+The variables in question are shown below:
+
+```{r }
+path_data_m = "z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\DATA\\CCM\\RTX\\"
+mnth_vintage = 'rtmlydata.2011m10.csv'
+
+data_m = read.csv( paste0( path_data_m, mnth_vintage ), stringsAsFactors = FALSE, sep = "," )
+tsx_m  = window( ts( data_m, start = c(1947,1), frequency = 12 )[,-1], start = c(1970,1), end = c(2011, 9) )
+
+head( tsx_m )
+
+name_sml = c( 'EMPLOY', 'IP', 'RETAIL', 'HS', 'ISM' )
+name_lrg = c( 'EMPLOY', 'IP', 'RETAIL', 'HS', 'ISM', 'SP500', 'TBOND', 'TBILL', 'ISMSUPDEL', 'ISMORDERS', 'WKLYHOURS', 'CLAIMS' )
+
+```
+
+```{r x-variables, echo = T}
+# par( mrow( 1,2) )
+sapply( name_lrg, function(sx){
+
+  plot( tsx_m[,sx], ylab = "", main = sx ) 
+  
+})
+#tfplot( tsx_m[,'EMPLOY'], ylab = "", title = "EMPLOY" )
+#tfplot( tsx_m[,'IP'], ylab = "", title = "IP" )
+```
+
+# Point forecasts
+
+```{r bnch-point}
+
+spath_ar2_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR2_PRB\\SV-OFF\\'
+spath_ar0_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR0_PRB\\SV-OFF\\'
+spath_lrg_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\LRG-ALL_PRB\\SV-OFF\\'
+spath_sml_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SML-ALL_PRB\\SV-OFF\\'
+
+
+spath_sim_ism_off    <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ISM_PRB\\SV-OFF\\'
+spath_sim_employ_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-EMPLOY_PRB\\SV-OFF\\'
+spath_sim_supdel_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SUPDEL_PRB\\SV-OFF\\'
+spath_sim_orders_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ORDERS_PRB\\SV-OFF\\'
+spath_sim_hours_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-HOURS_PRB\\SV-OFF\\'
+spath_sim_sp500_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SP500_PRB\\SV-OFF\\'
+spath_sim_tbill_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBILL_PRB\\SV-OFF\\'
+spath_sim_tbond_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBOND_PRB\\SV-OFF\\'
+spath_sim_claims_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-CLAIMS_PRB\\SV-OFF\\'
+spath_sim_rsales_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-RSALES_PRB\\SV-OFF\\'
+spath_sim_ip_off     <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-IP_PRB\\SV-OFF\\'
+spath_sim_starts_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-STARTS_PRB\\SV-OFF\\'
+
+
+spath_ar2_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR2_PRB\\SV-ON\\'
+spath_ar0_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR0_PRB\\SV-ON\\'
+spath_lrg_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\LRG-ALL_PRB\\SV-ON\\'
+spath_sml_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SML-ALL_PRB\\SV-ON\\'
+
+
+spath_sim_ism_on    <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ISM_PRB\\SV-ON\\'
+spath_sim_employ_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-EMPLOY_PRB\\SV-ON\\'
+spath_sim_supdel_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SUPDEL_PRB\\SV-ON\\'
+spath_sim_orders_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ORDERS_PRB\\SV-ON\\'
+spath_sim_hours_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-HOURS_PRB\\SV-ON\\'
+spath_sim_sp500_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SP500_PRB\\SV-ON\\'
+spath_sim_tbill_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBILL_PRB\\SV-ON\\'
+spath_sim_tbond_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBOND_PRB\\SV-ON\\'
+spath_sim_claims_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-CLAIMS_PRB\\SV-ON\\'
+spath_sim_rsales_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-RSALES_PRB\\SV-ON\\'
+spath_sim_ip_on     <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-IP_PRB\\SV-ON\\'
+spath_sim_starts_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-STARTS_PRB\\SV-ON\\'
+
+
+list_arX_off <- list( c( spath_ar2_off, 'UNI-AR2', 'PRB', "SV-OFF" ),  
+                      c( spath_ar0_off, 'UNI-AR0', 'PRB', "SV-OFF" ) )
+
+list_ccm_off <- list( c( spath_sml_off, 'SML-ALL', 'PRB', "SV-OFF" ),
+                      c( spath_lrg_off, 'LRG-ALL', 'PRB', "SV-OFF" ) )
+
+list_sim_off <- list( c( spath_sim_ism_off   , 'SIM-ISM'   , 'PRB', "SV-OFF" ), 
+                      c( spath_sim_employ_off, 'SIM-EMPLOY', 'PRB', "SV-OFF" ), 
+                      c( spath_sim_supdel_off, 'SIM-SUPDEL', 'PRB', "SV-OFF" ), 
+                      c( spath_sim_orders_off, 'SIM-ORDERS', 'PRB', "SV-OFF" ), 
+                      c( spath_sim_hours_off , 'SIM-HOURS' , 'PRB', "SV-OFF" ), 
+                      c( spath_sim_sp500_off , 'SIM-SP500' , 'PRB', "SV-OFF" ), 
+                      c( spath_sim_tbill_off , 'SIM-TBILL' , 'PRB', "SV-OFF" ), 
+                      c( spath_sim_tbond_off , 'SIM-TBOND' , 'PRB', "SV-OFF" ), 
+                      c( spath_sim_claims_off, 'SIM-CLAIMS', 'PRB', "SV-OFF" ), 
+                      c( spath_sim_rsales_off, 'SIM-RSALES', 'PRB', "SV-OFF" ), 
+                      c( spath_sim_ip_off    , 'SIM-IP'    , 'PRB', "SV-OFF" ), 
+                      c( spath_sim_starts_off, 'SIM-STARTS', 'PRB', "SV-OFF" ) )
+                      
+                      
+                      
+list_arX_on  <- list( c( spath_ar2_on , 'UNI-AR2', 'PRB', "SV-ON" ),  
+                      c( spath_ar0_on , 'UNI-AR0', 'PRB', "SV-ON" ) )
+
+list_ccm_on  <- list( c( spath_sml_on , 'SML-ALL', 'PRB', "SV-ON" ),
+                      c( spath_lrg_on , 'LRG-ALL', 'PRB', "SV-ON" ) )
+
+list_sim_on  <- list( c( spath_sim_ism_on    , 'SIM-ISM'   , 'PRB', "SV-ON" ),
+                      c( spath_sim_employ_on , 'SIM-EMPLOY', 'PRB', "SV-ON" ),
+                      c( spath_sim_supdel_on , 'SIM-SUPDEL', 'PRB', "SV-ON" ),
+                      c( spath_sim_orders_on , 'SIM-ORDERS', 'PRB', "SV-ON" ),
+                      c( spath_sim_hours_on  , 'SIM-HOURS' , 'PRB', "SV-ON" ),
+                      c( spath_sim_sp500_on  , 'SIM-SP500' , 'PRB', "SV-ON" ),
+                      c( spath_sim_tbill_on  , 'SIM-TBILL' , 'PRB', "SV-ON" ),
+                      c( spath_sim_tbond_on  , 'SIM-TBOND' , 'PRB', "SV-ON" ), 
+                      c( spath_sim_claims_on , 'SIM-CLAIMS', 'PRB', "SV-ON" ),
+                      c( spath_sim_rsales_on , 'SIM-RSALES', 'PRB', "SV-ON" ), 
+                      c( spath_sim_ip_on     , 'SIM-IP'    , 'PRB', "SV-ON" ),
+                      c( spath_sim_starts_on , 'SIM-STARTS', 'PRB', "SV-ON" ) )
+
+list_off <- c(  list_arX_off, list_ccm_off, list_sim_off  )
+list_on  <- c(  list_arX_on , list_ccm_on , list_sim_on   )
+
+name_off <- sapply( list_off, function(x) x[2] )
+name_on  <- sapply( list_on , function(x) x[2] )
+
+```
+
+
+## SV-OFF
+
+```{r point-off}
+
+###compare point forecasts: get RMSFE
+
+rmse_off_alle <- sapply( list_off, function( tempIN ){
+  
+  funcGetRMSFE( fo, tempIN, "ALLE" )  
+  
+})
+colnames( rmse_off_alle ) <- name_off
+
+rmse_off_boom <- sapply( list_off, function( tempIN ){
+  
+  funcGetRMSFE( fo, tempIN, "BOOM" )  
+  
+})
+colnames( rmse_off_boom ) <- name_off
+
+rmse_off_bust <- sapply( list_off, function( tempIN ){
+  
+  funcGetRMSFE( fo, tempIN, "BUST" )  
+  
+})
+colnames( rmse_off_bust ) <- name_off
+
+
+rmse_off_alle = t( rmse_off_alle )
+rmse_off_boom = t( rmse_off_boom )
+rmse_off_bust = t( rmse_off_bust)
+
+rmse_off_alle_ratio = t( apply( rmse_off_alle, 1, function(x){ x / rmse_off_alle[ 'UNI-AR2', ] - 1 } ) )
+rmse_off_boom_ratio = t( apply( rmse_off_boom, 1, function(x){ x / rmse_off_boom[ 'UNI-AR2', ] - 1 } ) )
+rmse_off_bust_ratio = t( apply( rmse_off_bust, 1, function(x){ x / rmse_off_bust[ 'UNI-AR2', ] - 1 } ) )
+
+
+rmse_off_alle_tbl = as.data.frame( round( cbind( rmse_off_alle, NA, rmse_off_alle_ratio ), digits = 3 ) )
+#rmse_off_alle_tbl = cbind( model = rownames(rmse_off_alle_tbl), rmse_off_alle_tbl )
+
+rmse_off_alle_xtbl = xtable( rmse_off_alle_tbl )
+digits( rmse_off_alle_xtbl ) = 3
+rmse_off_alle_xtbl
+
+rmse_off_boom_tbl = as.data.frame( round( cbind( rmse_off_boom, NA, rmse_off_boom_ratio ), digits = 3 ) )
+#rmse_off_boom_tbl = cbind( model = rownames(rmse_off_boom_tbl), rmse_off_boom_tbl )
+
+rmse_off_boom_xtbl = xtable( rmse_off_boom_tbl )
+digits( rmse_off_boom_xtbl ) = 3
+rmse_off_boom_xtbl
+
+rmse_off_bust_tbl = as.data.frame( round( cbind( rmse_off_bust, NA, rmse_off_bust_ratio ), digits = 3 ) )
+#rmse_off_bust_tbl = cbind( model = rownames(rmse_off_bust_tbl), rmse_off_bust_tbl )
+
+rmse_off_bust_xtbl = xtable( rmse_off_bust_tbl )
+digits( rmse_off_bust_xtbl ) = 3
+rmse_off_bust_xtbl
+```
+
+```{r point-off-plot}
+
+fo1 = rmse_off_alle_ratio[, 'FO1']
+fo2 = rmse_off_alle_ratio[, 'FO2']
+fo3 = rmse_off_alle_ratio[, 'FO3']
+fo4 = rmse_off_alle_ratio[, 'FO4']
+
+col_uni = rgb(0.3,0.1,0.4,0.6)
+col_ccm = rgb(0.3,0.5,0.4,0.6)
+col_sim = rgb(0.3,0.9,0.4,0.6)
+
+col  = c( rep( col_uni, 2 ),  rep( col_ccm, 2 ), rep( col_sim, 12 ) )
+ylim = range( c( rmse_off_alle_ratio, rmse_off_boom_ratio, rmse_off_bust_ratio ), na.rm = T ) 
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim )
+legend(x=20,y=0.65,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="RRMSFE: full sample",side=3,line=0,outer=TRUE, cex = 0.8)
+#dev.off()
+
+# boom sample
+
+fo1 = rmse_off_boom_ratio[, 'FO1']
+fo2 = rmse_off_boom_ratio[, 'FO2']
+fo3 = rmse_off_boom_ratio[, 'FO3']
+fo4 = rmse_off_boom_ratio[, 'FO4']
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim )
+legend(x=20,y=0.65,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="RRMSFE: boom sample",side=3,line=0,outer=TRUE, cex = 0.8)
+#dev.off()
+
+# bust sample
+
+fo1 = rmse_off_bust_ratio[, 'FO1']
+fo2 = rmse_off_bust_ratio[, 'FO2']
+fo3 = rmse_off_bust_ratio[, 'FO3']
+fo4 = rmse_off_bust_ratio[, 'FO4']
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim )
+legend(x=20,y=1.25,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="RRMSFE: bust sample",side=3,line=0,outer=TRUE, cex = 0.8)
+
+dev.off()
+```
+
+## SV-ON
+
+```{r point-on}
+
+###compare point forecasts: get RMSFE
+
+rmse_on_alle <- sapply( list_on, function( tempIN ){
+  
+  funcGetRMSFE( fo, tempIN, "ALLE" )  
+  
+})
+colnames( rmse_on_alle ) <- name_on
+
+rmse_on_boom <- sapply( list_on, function( tempIN ){
+  
+  funcGetRMSFE( fo, tempIN, "BOOM" )  
+  
+})
+colnames( rmse_on_boom ) <- name_on
+
+rmse_on_bust <- sapply( list_on, function( tempIN ){
+  
+  funcGetRMSFE( fo, tempIN, "BUST" )  
+  
+})
+colnames( rmse_on_bust ) <- name_on
+
+
+rmse_on_alle = t( rmse_on_alle )
+rmse_on_boom = t( rmse_on_boom )
+rmse_on_bust = t( rmse_on_bust)
+
+rmse_on_alle_ratio = t( apply( rmse_on_alle, 1, function(x){ x / rmse_off_alle[ 'UNI-AR2', ] - 1 } ) )
+rmse_on_boom_ratio = t( apply( rmse_on_boom, 1, function(x){ x / rmse_off_boom[ 'UNI-AR2', ] - 1 } ) )
+rmse_on_bust_ratio = t( apply( rmse_on_bust, 1, function(x){ x / rmse_off_bust[ 'UNI-AR2', ] - 1 } ) )
+
+
+rmse_on_alle_tbl = as.data.frame( round( cbind( rmse_on_alle, NA, rmse_on_alle_ratio ), digits = 3 ) )
+#rmse_on_alle_tbl = cbind( model = rownames(rmse_on_alle_tbl), rmse_on_alle_tbl )
+
+rmse_on_alle_xtbl = xtable( rmse_on_alle_tbl )
+digits( rmse_on_alle_xtbl ) = 3
+rmse_on_alle_xtbl
+
+rmse_on_boom_tbl = as.data.frame( round( cbind( rmse_on_boom, NA, rmse_on_boom_ratio ), digits = 3 ) )
+#rmse_on_boom_tbl = cbind( model = rownames(rmse_on_boom_tbl), rmse_on_boom_tbl )
+
+rmse_on_boom_xtbl = xtable( rmse_on_boom_tbl )
+digits( rmse_on_boom_xtbl ) = 3
+rmse_on_boom_xtbl
+
+rmse_on_bust_tbl = as.data.frame( round( cbind( rmse_on_bust, NA, rmse_on_bust_ratio ), digits = 3 ) )
+#rmse_on_bust_tbl = cbind( model = rownames(rmse_on_bust_tbl), rmse_on_bust_tbl )
+
+rmse_on_bust_xtbl = xtable( rmse_on_bust_tbl )
+digits( rmse_on_bust_xtbl ) = 3
+rmse_on_bust_xtbl
+```
+
+## Effect of SV on RMSFE
+
+```{r sv-rmsfe}
+
+sv_rmsfe_alle_tbl = as.data.frame( round( rmse_on_alle/rmse_off_alle - 1, digits = 3 ) )
+sv_rmsfe_alle_xtbl = xtable( sv_rmsfe_alle_tbl )
+digits( sv_rmsfe_alle_xtbl ) = 3
+sv_rmsfe_alle_xtbl
+
+sv_rmsfe_boom_tbl = as.data.frame( round( rmse_on_boom/rmse_off_boom - 1, digits = 3 ) )
+sv_rmsfe_boom_xtbl = xtable( sv_rmsfe_boom_tbl )
+digits( sv_rmsfe_boom_xtbl ) = 3
+sv_rmsfe_boom_xtbl
+
+sv_rmsfe_bust_tbl = as.data.frame( round( rmse_on_bust/rmse_off_bust - 1, digits = 3 ) )
+sv_rmsfe_bust_xtbl = xtable( sv_rmsfe_bust_tbl )
+digits( sv_rmsfe_bust_xtbl ) = 3
+sv_rmsfe_bust_xtbl
+
+sv_rmsfe_xtbl = xtable( round( cbind( sv_rmsfe_alle_tbl, sv_rmsfe_boom_tbl, sv_rmsfe_bust_tbl), digits = 3 ) )
+digits( sv_rmsfe_xtbl ) = 3
+sv_rmsfe_xtbl
+
+```
+
+
+```{r sv-rmsfe-plot}
+
+fo1 = sv_rmsfe_alle_tbl[, 'FO1']; names( fo1 ) = rownames( sv_rmsfe_alle_tbl )
+fo2 = sv_rmsfe_alle_tbl[, 'FO2']; names( fo2 ) = rownames( sv_rmsfe_alle_tbl )
+fo3 = sv_rmsfe_alle_tbl[, 'FO3']; names( fo3 ) = rownames( sv_rmsfe_alle_tbl )
+fo4 = sv_rmsfe_alle_tbl[, 'FO4']; names( fo4 ) = rownames( sv_rmsfe_alle_tbl )
+
+col_uni = rgb(0.3,0.1,0.4,0.6)
+col_ccm = rgb(0.3,0.5,0.4,0.6)
+col_sim = rgb(0.3,0.9,0.4,0.6)
+
+col  = c( rep( col_uni, 2 ),  rep( col_ccm, 2 ), rep( col_sim, 12 ) )
+ylim = range( c( sv_rmsfe_alle_tbl, sv_rmsfe_boom_tbl, sv_rmsfe_bust_tbl ), na.rm = T ) 
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim )
+legend(x=20,y=0.35,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="RRMSFE: full sample",side=3,line=0,outer=TRUE, cex = 0.8)
+
+# boom sample
+
+fo1 = sv_rmsfe_boom_tbl[, 'FO1']; names( fo1 ) = rownames( sv_rmsfe_boom_tbl )
+fo2 = sv_rmsfe_boom_tbl[, 'FO2']; names( fo2 ) = rownames( sv_rmsfe_boom_tbl )
+fo3 = sv_rmsfe_boom_tbl[, 'FO3']; names( fo3 ) = rownames( sv_rmsfe_boom_tbl )
+fo4 = sv_rmsfe_boom_tbl[, 'FO4']; names( fo4 ) = rownames( sv_rmsfe_boom_tbl )
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim )
+legend(x=20,y=0.35,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="RRMSFE: boom sample",side=3,line=0,outer=TRUE, cex = 0.8)
+
+# bust sample
+
+fo1 = sv_rmsfe_bust_tbl[, 'FO1']; names( fo1 ) = rownames( sv_rmsfe_bust_tbl )
+fo2 = sv_rmsfe_bust_tbl[, 'FO2']; names( fo2 ) = rownames( sv_rmsfe_bust_tbl )
+fo3 = sv_rmsfe_bust_tbl[, 'FO3']; names( fo3 ) = rownames( sv_rmsfe_bust_tbl )
+fo4 = sv_rmsfe_bust_tbl[, 'FO4']; names( fo4 ) = rownames( sv_rmsfe_bust_tbl )
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim )
+legend(x=20,y=0.35,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="RRMSFE: bust sample",side=3,line=0,outer=TRUE, cex = 0.8)
+
+```
+
+```{r cssfed}
+###compute CSSFED: 
+
+list_arX_on  <- list( c( spath_ar2_on , 'UNI-AR2', 'PRB', "SV-ON" ),  
+                      c( spath_ar0_on , 'UNI-AR0', 'PRB', "SV-ON" ) )
+
+list_ccm_on  <- list( c( spath_sml_on , 'SML-ALL', 'PRB', "SV-ON" ),
+                      c( spath_lrg_on , 'LRG-ALL', 'PRB', "SV-ON" ) )
+
+list_sim_on  <- list( c( spath_sim_ism_on    , 'SIM-ISM'   , 'PRB', "SV-ON" ),
+                      c( spath_sim_employ_on , 'SIM-EMPLOY', 'PRB', "SV-ON" ),
+                      c( spath_sim_supdel_on , 'SIM-SUPDEL', 'PRB', "SV-ON" ),
+                      c( spath_sim_orders_on , 'SIM-ORDERS', 'PRB', "SV-ON" ),
+                      c( spath_sim_hours_on  , 'SIM-HOURS' , 'PRB', "SV-ON" ),
+                      c( spath_sim_sp500_on  , 'SIM-SP500' , 'PRB', "SV-ON" ),
+                      c( spath_sim_tbill_on  , 'SIM-TBILL' , 'PRB', "SV-ON" ),
+                      c( spath_sim_tbond_on  , 'SIM-TBOND' , 'PRB', "SV-ON" ), 
+                      c( spath_sim_claims_on , 'SIM-CLAIMS', 'PRB', "SV-ON" ),
+                      c( spath_sim_rsales_on , 'SIM-RSALES', 'PRB', "SV-ON" ), 
+                      c( spath_sim_ip_on     , 'SIM-IP'    , 'PRB', "SV-ON" ),
+                      c( spath_sim_starts_on , 'SIM-STARTS', 'PRB', "SV-ON" ) )
+
+
+#match names that start with SIM and have arbitrary characters between SIM and ON, ends with ON
+# indx_sv_on  = grep( '^SIM(.+)...ON' , rownames( mLnPS_ccm_sim_alle_diffe ) ); indx_sv_on  #_SV-ON
+# indx_sv_off = grep( '^SIM(.+)...OFF', rownames( mLnPS_ccm_sim_alle_diffe ) ); indx_sv_off
+# 
+#CSSFED for ARX
+
+cssfed_ar2_ar0 <- funcGetCSSFED( list_arX_off, '2nd1st' )
+funcDrawCSSFED( cssfed_ar2_ar0, 'topleft', 'CSSFED: AR(0) vs AR(2)')
+
+#CSSFED for CCM 
+list_ar2_ccm <- lapply( list_ccm_off, function( x ) list( list_arX_off[[1]], x ) )
+
+lapply( list_ar2_ccm, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cssfed_ar2_ccm <- funcGetCSSFED( x, '1st2nd' )
+  
+  funcDrawCSSFED( cssfed_ar2_ccm, 'topleft', paste0( 'CSSFED: ','AR(2) vs ', x[[ c(2,2) ]]) )  
+  
+})
+
+#CSSFED for SIM
+list_ar2_sim <- lapply( list_sim_off, function( x ) list( list_arX_off[[1]], x ) )
+
+lapply( list_ar2_sim, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cssfed_ar2_sim <- funcGetCSSFED( x, '1st2nd' )
+  
+  funcDrawCSSFED( cssfed_ar2_sim, 'topleft', paste0( 'CSSFED: ','AR(2) vs ', x[[ c(2,2) ]]) )  
+  
+})
+
+```
+# Density forecasts
+
+## SV-ON 
+```{r density}
+###compare density forecasts: get mLnPS
+
+
+mLnPS_alle_on <- sapply( list_on, function( tempIN ){
+  
+  funcGetmLnPS( fo, tempIN, "ALLE" )  
+  
+})
+colnames( mLnPS_alle_on ) <- name_on
+
+mLnPS_boom_on <- sapply( list_on, function( tempIN ){
+  
+  funcGetmLnPS( fo, tempIN, "BOOM" )  
+  
+})
+colnames( mLnPS_boom_on ) <- name_on
+
+mLnPS_bust_on <- sapply( list_on, function( tempIN ){
+  
+  funcGetmLnPS( fo, tempIN, "BUST" )  
+  
+})
+colnames( mLnPS_bust_on ) <- name_on
+
+
+mLnPS_alle_on = t( mLnPS_alle_on )
+mLnPS_bust_on = t( mLnPS_bust_on)
+mLnPS_boom_on = t( mLnPS_boom_on )
+
+mlnps_on_alle_diffe = t( apply( mLnPS_alle_on, 1, function(x) x - mLnPS_alle_on[ 'UNI-AR2', ]) )
+mlnps_on_boom_diffe = t( apply( mLnPS_boom_on, 1, function(x) x - mLnPS_boom_on[ 'UNI-AR2', ]) )
+mlnps_on_bust_diffe = t( apply( mLnPS_bust_on, 1, function(x) x - mLnPS_bust_on[ 'UNI-AR2', ]) )
+
+# full sample
+
+mLnPS_alle_ON_tbl = as.data.frame( round( cbind( mLnPS_alle_on, NA, mlnps_on_alle_diffe ), digits = 3 ) )
+#mLnPS_ON_tbl = cbind( model = rownames(mLnPS_ON_tbl), mLnPS_ON_tbl )
+
+mLnPS_alle_ON_xtbl = xtable( mLnPS_alle_ON_tbl )
+digits( mLnPS_alle_ON_xtbl ) = 3
+mLnPS_alle_ON_xtbl
+
+# boom sample
+
+mLnPS_boom_ON_tbl = as.data.frame( round( cbind( mLnPS_boom_on, NA, mlnps_on_boom_diffe ), digits = 3 ) )
+#mLnPS_ON_tbl = cbind( model = rownames(mLnPS_ON_tbl), mLnPS_ON_tbl )
+
+mLnPS_boom_ON_xtbl = xtable( mLnPS_boom_ON_tbl )
+digits( mLnPS_boom_ON_xtbl ) = 3
+mLnPS_boom_ON_xtbl
+
+# bust sample
+
+mLnPS_bust_ON_tbl = as.data.frame( round( cbind( mLnPS_bust_on, NA, mlnps_on_bust_diffe ), digits = 3 ) )
+#mLnPS_ON_tbl = cbind( model = rownames(mLnPS_ON_tbl), mLnPS_ON_tbl )
+
+mLnPS_bust_ON_xtbl = xtable( mLnPS_bust_ON_tbl )
+digits( mLnPS_bust_ON_xtbl ) = 3
+mLnPS_bust_ON_xtbl
+
+```
+
+```{r density-on-plot}
+
+fo1 = mlnps_on_alle_diffe[, 'FO1']
+fo2 = mlnps_on_alle_diffe[, 'FO2']
+fo3 = mlnps_on_alle_diffe[, 'FO3']
+fo4 = mlnps_on_alle_diffe[, 'FO4']
+
+ylim_mlnps_on = range( c( mlnps_on_alle_diffe, mlnps_on_boom_diffe, mlnps_on_bust_diffe ), na.rm = T ) 
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim_mlnps_on )
+legend(x=20,y=2.5,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="ALSD: full sample",side=3,line=0,outer=TRUE, cex = 0.8)
+#dev.off()
+
+# boom sample
+
+fo1 = mlnps_on_boom_diffe[, 'FO1']
+fo2 = mlnps_on_boom_diffe[, 'FO2']
+fo3 = mlnps_on_boom_diffe[, 'FO3']
+fo4 = mlnps_on_boom_diffe[, 'FO4']
+
+par( oma=c(4,1,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim_mlnps_on )
+legend(x=20,y=2.5,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="ALSD: boom sample",side=3,line=0,outer=TRUE, cex = 0.8)
+#dev.off()
+
+# bust sample
+
+fo1 = mlnps_on_bust_diffe[, 'FO1']
+fo2 = mlnps_on_bust_diffe[, 'FO2']
+fo3 = mlnps_on_bust_diffe[, 'FO3']
+fo4 = mlnps_on_bust_diffe[, 'FO4']
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_mlnps_on )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim_mlnps_on )
+legend(x=20,y=2.5,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="ALSD: bust sample",side=3,line=0,outer=TRUE, cex = 0.8)
+
+
+dev.off()
+```
+```{r cslsd-on}
+
+#CSLSD for ARX
+cslsd_ar2_on_ar0_on <- funcGetCSLNPSD( list_arX_on, '1st2nd' )
+funcDrawCSLNPSD( cslsd_ar2_on_ar0_on, 'topleft', paste0('CSLSD: AR(2)-SV vs AR(0)-SV') )
+
+#CSLSD for CCM
+list_on_ccm_ar2 <- lapply( list_ccm_on, function( x ) list( x, list_arX_on[[1]] ) )
+
+lapply( list_on_ccm_ar2, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cslsd_on_x_ar2 <- funcGetCSLNPSD( x, '1st2nd' )
+  
+  funcDrawCSLNPSD( cslsd_on_x_ar2, 'topleft', paste0( 'CSLSD: ', x[[ c(1,2) ]],'-SV vs AR(2)-SV'  ) )  
+  
+})
+
+#CSLSD for SIM
+list_on_sim_ar2 <- lapply( list_sim_on, function( x ) list( x, list_arX_on[[1]] ) )
+
+lapply( list_on_sim_ar2, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cslsd_on_x_ar2 <- funcGetCSLNPSD( x, '1st2nd' )
+  
+  funcDrawCSLNPSD( cslsd_on_x_ar2, 'topleft', paste0( 'CSLSD: ', x[[ c(1,2) ]],'-SV vs AR(2)-SV'  ) )  
+  
+})
+
+
+```
+## SV-OFF
+
+```{r density-off}
+
+
+mLnPS_alle_off <- sapply( list_off, function( tempIN ){
+  
+  funcGetmLnPS( fo, tempIN, "ALLE" )  
+  
+})
+colnames( mLnPS_alle_off ) <- name_off
+
+mLnPS_boom_off <- sapply( list_off, function( tempIN ){
+  
+  funcGetmLnPS( fo, tempIN, "BOOM" )  
+  
+})
+colnames( mLnPS_boom_off ) <- name_off
+
+mLnPS_bust_off <- sapply( list_off, function( tempIN ){
+  
+  funcGetmLnPS( fo, tempIN, "BUST" )  
+  
+})
+colnames( mLnPS_bust_off ) <- name_off
+
+
+mLnPS_alle_off = t( mLnPS_alle_off )
+mLnPS_bust_off = t( mLnPS_bust_off)
+mLnPS_boom_off = t( mLnPS_boom_off )
+
+mlnps_off_alle_diffe = t( apply( mLnPS_alle_off, 1, function(x) x - mLnPS_alle_on[ 'UNI-AR2', ]) )
+mlnps_off_boom_diffe = t( apply( mLnPS_boom_off, 1, function(x) x - mLnPS_boom_on[ 'UNI-AR2', ]) )
+mlnps_off_bust_diffe = t( apply( mLnPS_bust_off, 1, function(x) x - mLnPS_bust_on[ 'UNI-AR2', ]) )
+
+# full sample
+
+mLnPS_alle_off_tbl = as.data.frame( round( cbind( mLnPS_alle_off, NA, mlnps_off_alle_diffe ), digits = 3 ) )
+#mLnPS_off_tbl = cbind( model = rownames(mLnPS_off_tbl), mLnPS_off_tbl )
+
+mLnPS_alle_off_xtbl = xtable( mLnPS_alle_off_tbl )
+digits( mLnPS_alle_off_xtbl ) = 3
+mLnPS_alle_off_xtbl
+
+# boom sample
+
+mLnPS_boom_off_tbl = as.data.frame( round( cbind( mLnPS_boom_off, NA, mlnps_off_boom_diffe ), digits = 3 ) )
+#mLnPS_off_tbl = cbind( model = rownames(mLnPS_off_tbl), mLnPS_off_tbl )
+
+mLnPS_boom_off_xtbl = xtable( mLnPS_boom_off_tbl )
+digits( mLnPS_boom_off_xtbl ) = 3
+mLnPS_boom_off_xtbl
+
+# bust sample
+
+mLnPS_bust_off_tbl = as.data.frame( round( cbind( mLnPS_bust_off, NA, mlnps_off_bust_diffe ), digits = 3 ) )
+#mLnPS_off_tbl = cbind( model = rownames(mLnPS_off_tbl), mLnPS_off_tbl )
+
+mLnPS_bust_off_xtbl = xtable( mLnPS_bust_off_tbl )
+digits( mLnPS_bust_off_xtbl ) = 3
+mLnPS_bust_off_xtbl
+
+
+```
+
+```{r sv-als}
+
+sv_als_alle_tbl = as.data.frame( round( mLnPS_alle_on - mLnPS_alle_off, digits = 3 ) )
+sv_als_alle_xtbl = xtable( sv_als_alle_tbl )
+digits( sv_als_alle_xtbl ) = 3
+sv_als_alle_xtbl
+
+sv_als_boom_tbl = as.data.frame( round( mLnPS_boom_on - mLnPS_boom_off, digits = 3 ) )
+sv_als_boom_xtbl = xtable( sv_als_boom_tbl )
+digits( sv_als_boom_xtbl ) = 3
+sv_als_boom_xtbl
+
+sv_als_bust_tbl = as.data.frame( round( mLnPS_bust_on - mLnPS_bust_off, digits = 3 ) )
+sv_als_bust_xtbl = xtable( sv_als_bust_tbl )
+digits( sv_als_bust_xtbl ) = 3
+sv_als_bust_xtbl
+
+sv_als_xtbl = xtable( round( cbind( sv_als_alle_tbl, sv_als_boom_tbl, sv_als_bust_tbl), digits = 3 ) )
+digits( sv_als_xtbl ) = 3
+sv_als_xtbl
+
+```
+
+
+```{r sv-als-plot}
+
+fo1 = sv_als_alle_tbl[, 'FO1']; names( fo1 ) = rownames( sv_als_alle_tbl )
+fo2 = sv_als_alle_tbl[, 'FO2']; names( fo2 ) = rownames( sv_als_alle_tbl )
+fo3 = sv_als_alle_tbl[, 'FO3']; names( fo3 ) = rownames( sv_als_alle_tbl )
+fo4 = sv_als_alle_tbl[, 'FO4']; names( fo4 ) = rownames( sv_als_alle_tbl )
+
+ylim_sv_als = range( c( sv_als_alle_tbl, sv_als_boom_tbl, sv_als_bust_tbl ), na.rm = T ) 
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim_sv_als )
+legend(x=20,y=1.7,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="ALSD (sv on als) : full sample",side=3,line=0,outer=TRUE, cex = 0.8)
+#dev.off()
+
+# boom sample
+
+fo1 = sv_als_boom_tbl[, 'FO1']; names( fo1 ) = rownames( sv_als_boom_tbl )
+fo2 = sv_als_boom_tbl[, 'FO2']; names( fo2 ) = rownames( sv_als_boom_tbl )
+fo3 = sv_als_boom_tbl[, 'FO3']; names( fo3 ) = rownames( sv_als_boom_tbl )
+fo4 = sv_als_boom_tbl[, 'FO4']; names( fo4 ) = rownames( sv_als_boom_tbl )
+
+par( oma=c(4,1,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim_sv_als )
+legend(x=20,y=1.7,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="ALSD (sv on als): boom sample",side=3,line=0,outer=TRUE, cex = 0.8)
+#dev.off()
+
+# bust sample
+
+fo1 = sv_als_bust_tbl[, 'FO1']; names( fo1 ) = rownames( sv_als_bust_tbl )
+fo2 = sv_als_bust_tbl[, 'FO2']; names( fo2 ) = rownames( sv_als_bust_tbl )
+fo3 = sv_als_bust_tbl[, 'FO3']; names( fo3 ) = rownames( sv_als_bust_tbl )
+fo4 = sv_als_bust_tbl[, 'FO4']; names( fo4 ) = rownames( sv_als_bust_tbl )
+
+par( oma=c(4,0,1,4) )
+par( mfrow=c(4,1) )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo1 , border=T , names.arg=names( fo1 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo2 , border=T , names.arg=names( fo2 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo3 , border=T , names.arg=names( fo3 ), cex.names=0.6 , las=2, col = col, xlab = "", xaxt = "n", ylim = ylim_sv_als )
+par(mar=c(0.5, 4.5, 0.5, 0.5))
+barplot( fo4 , border=T , names.arg=names( fo4 ), cex.names=0.6 , las=2, col = col, ylim = ylim_sv_als )
+legend(x=20,y=1.6,legend=c("UNI","CCM","SIM"),col=unique(col),pch=16,bty="n",xpd=NA)
+mtext(text="ALSD (sv on als): bust sample",side=3,line=0,outer=TRUE, cex = 0.8)
+
+
+dev.off()
+```
+
+```{r cslsd-on-off}
+# effect of sv on density forecasts .-SV vs .
+
+#CSLSD for ARX
+
+list_arX_on_off <- lapply( list_arX_on, function(x){
+  
+  mdl = x[ 2 ]; mdl
+  
+  list( x, c( gsub( "-ON", "-OFF", x[1] ), x[2], x[3], 'SV-OFF' ))
+  
+})
+
+lapply( list_arX_on_off, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cslsd_on_off <- funcGetCSLNPSD( x, '1st2nd' )
+  
+  funcDrawCSLNPSD( cslsd_on_off, 'topleft', paste0( 'CSLSD: ', x[[ c(1,2) ]],'-SV vs ', x[[ c(2,2) ]] ) )  
+  
+})
+
+
+#CSLSD for CCM
+list_ccm_on_off <- lapply( list_ccm_on, function(x){
+  
+  mdl = x[ 2 ]; mdl
+  
+  list( x, c( gsub( "-ON", "-OFF", x[1] ), x[2], x[3], 'SV-OFF' ))
+  
+})
+
+lapply( list_ccm_on_off, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cslsd_on_off <- funcGetCSLNPSD( x, '1st2nd' )
+  
+  funcDrawCSLNPSD( cslsd_on_off, 'topleft', paste0( 'CSLSD: ', x[[ c(1,2) ]],'-SV vs ', x[[ c(2,2) ]] ) )  
+  
+})
+
+#CSLSD for SIM
+list_sim_on_off <- lapply( list_sim_on, function(x){
+  
+  mdl = x[ 2 ]; mdl
+  
+  list( x, c( gsub( "-ON", "-OFF", x[1] ), x[2], x[3], 'SV-OFF' ))
+  
+})
+
+lapply( list_sim_on_off, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
+  
+  cslsd_on_off <- funcGetCSLNPSD( x, '1st2nd' )
+  
+  funcDrawCSLNPSD( cslsd_on_off, 'topleft', paste0( 'CSLSD: ', x[[ c(1,2) ]],'-SV vs ', x[[ c(2,2) ]] ) )  
+  
+})
+
+
+```
+
+
+```{r }
+# make density combinations for SIM
+
+list_sim_off
+
+
+
+```
