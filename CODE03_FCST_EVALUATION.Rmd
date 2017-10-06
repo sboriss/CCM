@@ -13,12 +13,12 @@ cat("\014")  # clear console
 rm(list=ls(all=TRUE))
 
 library(openxlsx)
-library(tempdisagg)
 library(tfplot)
 library(bcp)
 library(colorspace)
 library(xtable)
 library(vioplot)
+require(KernSmooth)
 
 fcstBeg = c(1985,1)
 fcstEnd = c(2011,3)
@@ -328,8 +328,7 @@ funcGetPredDraws <- function( fo, tempIN ){ # tempIN = list_ccm_off[[1]]; tempIN
     
     sFile     <- paste0( pth, 'tsPredDraws_MODEL-',mdl,'_',pri,'_',svo,'_',j_fo_in,'.csv' )
     predDraws <- readCSV( sFile );  
-    predDraws
-    
+    if( !is.na( predDraws ) ) predDraws = predDraws[, 1:102] else predDraws = NA
   })
   
   names( listPredDraws ) = fo
@@ -352,7 +351,7 @@ variables enter the small model whereas the large model incorporates all twelve 
 The variables in question are shown below:
 
 ```{r }
-path_data_m = "z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\DATA\\CCM\\RTX\\"
+path_data_m = "c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\DATA\\CCM\\RTX\\"
 mnth_vintage = 'rtmlydata.2011m10.csv'
 
 data_m = read.csv( paste0( path_data_m, mnth_vintage ), stringsAsFactors = FALSE, sep = "," )
@@ -380,44 +379,44 @@ sapply( name_lrg, function(sx){
 
 ```{r bnch-point}
 
-spath_ar2_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR2_PRB\\SV-OFF\\'
-spath_ar0_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR0_PRB\\SV-OFF\\'
-spath_lrg_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\LRG-ALL_PRB\\SV-OFF\\'
-spath_sml_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SML-ALL_PRB\\SV-OFF\\'
+spath_ar2_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR2_PRB\\SV-OFF\\'
+spath_ar0_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR0_PRB\\SV-OFF\\'
+spath_lrg_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\LRG-ALL_PRB\\SV-OFF\\'
+spath_sml_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SML-ALL_PRB\\SV-OFF\\'
 
 
-spath_sim_ism_off    <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ISM_PRB\\SV-OFF\\'
-spath_sim_employ_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-EMPLOY_PRB\\SV-OFF\\'
-spath_sim_supdel_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SUPDEL_PRB\\SV-OFF\\'
-spath_sim_orders_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ORDERS_PRB\\SV-OFF\\'
-spath_sim_hours_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-HOURS_PRB\\SV-OFF\\'
-spath_sim_sp500_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SP500_PRB\\SV-OFF\\'
-spath_sim_tbill_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBILL_PRB\\SV-OFF\\'
-spath_sim_tbond_off  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBOND_PRB\\SV-OFF\\'
-spath_sim_claims_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-CLAIMS_PRB\\SV-OFF\\'
-spath_sim_rsales_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-RSALES_PRB\\SV-OFF\\'
-spath_sim_ip_off     <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-IP_PRB\\SV-OFF\\'
-spath_sim_starts_off <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-STARTS_PRB\\SV-OFF\\'
+spath_sim_ism_off    <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ISM_PRB\\SV-OFF\\'
+spath_sim_employ_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-EMPLOY_PRB\\SV-OFF\\'
+spath_sim_supdel_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SUPDEL_PRB\\SV-OFF\\'
+spath_sim_orders_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ORDERS_PRB\\SV-OFF\\'
+spath_sim_hours_off  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-HOURS_PRB\\SV-OFF\\'
+spath_sim_sp500_off  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SP500_PRB\\SV-OFF\\'
+spath_sim_tbill_off  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBILL_PRB\\SV-OFF\\'
+spath_sim_tbond_off  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBOND_PRB\\SV-OFF\\'
+spath_sim_claims_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-CLAIMS_PRB\\SV-OFF\\'
+spath_sim_rsales_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-RSALES_PRB\\SV-OFF\\'
+spath_sim_ip_off     <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-IP_PRB\\SV-OFF\\'
+spath_sim_starts_off <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-STARTS_PRB\\SV-OFF\\'
 
 
-spath_ar2_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR2_PRB\\SV-ON\\'
-spath_ar0_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR0_PRB\\SV-ON\\'
-spath_lrg_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\LRG-ALL_PRB\\SV-ON\\'
-spath_sml_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SML-ALL_PRB\\SV-ON\\'
+spath_ar2_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR2_PRB\\SV-ON\\'
+spath_ar0_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\UNI-AR0_PRB\\SV-ON\\'
+spath_lrg_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\LRG-ALL_PRB\\SV-ON\\'
+spath_sml_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SML-ALL_PRB\\SV-ON\\'
 
 
-spath_sim_ism_on    <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ISM_PRB\\SV-ON\\'
-spath_sim_employ_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-EMPLOY_PRB\\SV-ON\\'
-spath_sim_supdel_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SUPDEL_PRB\\SV-ON\\'
-spath_sim_orders_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ORDERS_PRB\\SV-ON\\'
-spath_sim_hours_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-HOURS_PRB\\SV-ON\\'
-spath_sim_sp500_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SP500_PRB\\SV-ON\\'
-spath_sim_tbill_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBILL_PRB\\SV-ON\\'
-spath_sim_tbond_on  <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBOND_PRB\\SV-ON\\'
-spath_sim_claims_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-CLAIMS_PRB\\SV-ON\\'
-spath_sim_rsales_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-RSALES_PRB\\SV-ON\\'
-spath_sim_ip_on     <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-IP_PRB\\SV-ON\\'
-spath_sim_starts_on <- 'Z:\\NotesKOF\\PAPERS\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-STARTS_PRB\\SV-ON\\'
+spath_sim_ism_on    <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ISM_PRB\\SV-ON\\'
+spath_sim_employ_on <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-EMPLOY_PRB\\SV-ON\\'
+spath_sim_supdel_on <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SUPDEL_PRB\\SV-ON\\'
+spath_sim_orders_on <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-ORDERS_PRB\\SV-ON\\'
+spath_sim_hours_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-HOURS_PRB\\SV-ON\\'
+spath_sim_sp500_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-SP500_PRB\\SV-ON\\'
+spath_sim_tbill_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBILL_PRB\\SV-ON\\'
+spath_sim_tbond_on  <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-TBOND_PRB\\SV-ON\\'
+spath_sim_claims_on <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-CLAIMS_PRB\\SV-ON\\'
+spath_sim_rsales_on <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-RSALES_PRB\\SV-ON\\'
+spath_sim_ip_on     <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-IP_PRB\\SV-ON\\'
+spath_sim_starts_on <- 'c:\\Users\\BBB\\ARBEIT\\US-CCM-DATA-ACTL\\RESU\\CCM\\SIM-STARTS_PRB\\SV-ON\\'
 
 
 list_arX_off <- list( c( spath_ar2_off, 'UNI-AR2', 'PRB', "SV-OFF" ),  
@@ -1192,8 +1191,58 @@ lapply( list_sim_on_off, function(x){ #  x = list_arx_ccm[[ 1 ]]; x
 ```{r }
 # make density combinations for SIM
 
-list_sim_off
+#list_aux = list( list_sim_off[[1]], list_sim_off[[2]], list_sim_off[[3]] )
 
+list_aux = list_sim_on
+
+list_mdl = lapply( list_aux, function(mdl){
+    
+  #mdl = list_sim_off[[1]]; mdl
+  pd = funcGetPredDraws( fo, mdl )
+  pd
+})
+
+
+#collect FO4
+list_mdl_aux = lapply( list_mdl, function( mdl ) as.matrix( mdl$FO4, nrow = dim( mdl$FO4 )[1] ) )
+
+str( list_mdl_aux )
+
+t = c( 2008, 4 )
+
+mat_pd = sapply( list_mdl_aux, function( mat ){  # m_mat_mdl_fo4 = list_mdl_fo4[[m]] 
+  
+  # get index for the fcst 
+  t_indx = which( mat[,"year"] == t[1] & mat[,"period"] == t[2] )
+  t_mdl_fo4 = as.vector( mat[ t_indx, -c( 1,2 ) ] )
+  t_mdl_fo4
+  
+})
+
+comb_range = range( mat_pd )
+comb_bw    = density( c( mat_pd ) )$bw
+
+# for each fcst quarter estimate density for each model ( columns in mat_pd ) with common knots
+list_dens = apply( mat_pd, 2, function(x) bkde( x, bandwidth=comb_bw, range.x = comb_range ) )
+
+#collect densities
+mat_dens_y = sapply( list_dens, function( d ) d[["y"]] )
+dens_range = range( mat_dens_y )
+
+# draw individual densities
+plot( NA, ylim = dens_range, xlim = comb_range, main = paste0("SIM density combination: ", t[1],"Q", t[2] ) )
+lapply( list_dens, function(d) lines( d$x, d$y ) )
+
+# draw density combination ( average )
+lines( list_dens[[1]]$x, apply(mat_dens_y, 1, mean), col = 2, lwd = 2 )
+
+
+# lines( list_dens[[1]]$x, list_dens[[1]]$y )
+# lines( list_dens[[2]]$x, list_dens[[2]]$y )
+# lines( list_dens[[3]]$x, list_dens[[3]]$y )
+
+
+# save combination density
 
 
 ```
