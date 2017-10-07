@@ -1204,38 +1204,58 @@ list_mdl = lapply( list_aux, function(mdl){
 
 
 #collect FO4
-list_mdl_aux = lapply( list_mdl, function( mdl ) as.matrix( mdl$FO4, nrow = dim( mdl$FO4 )[1] ) )
+sFO = "FO1"
+
+list_mdl_aux = lapply( list_mdl, function( mdl ) as.matrix( mdl[[sFO]], nrow = dim( mdl$FO4 )[1] ) )
 
 str( list_mdl_aux )
 
-t = c( 2008, 4 )
+#loop over dates
 
-mat_pd = sapply( list_mdl_aux, function( mat ){  # m_mat_mdl_fo4 = list_mdl_fo4[[m]] 
-  
-  # get index for the fcst 
-  t_indx = which( mat[,"year"] == t[1] & mat[,"period"] == t[2] )
-  t_mdl_fo4 = as.vector( mat[ t_indx, -c( 1,2 ) ] )
-  t_mdl_fo4
-  
+fcstTime_aux = time( ts( NA, start = fcstBeg, end = fcstEnd, frequency = 4 ) )
+fcstYear     = floor( fcstTime_aux )
+fcstPeriod   = ( fcstTime_aux - fcstYear + 0.25 ) * 4
+fcstTime     = t( apply( cbind( fcstYear, fcstPeriod ), 1, as.vector ) )
+
+# collect density combinations ( average ) over the whole fcst sample
+listBigCombDensAve = apply( fcstTime, 1, function(t){ # t = c( 2009, 1 )
+    
+    # loop over models for a given t and given fcst origin
+    mat_pd = sapply( list_mdl_aux, function( mat ){  # m_mat_mdl_fo4 = list_mdl_fo4[[m]] 
+      
+      # get index for the fcst 
+      t_indx = which( mat[,"year"] == t[1] & mat[,"period"] == t[2] )
+      t_mdl = as.vector( mat[ t_indx, -c( 1,2 ) ] )
+      t_mdl
+      
+    })
+    
+    comb_range = range( mat_pd )
+    comb_bw    = density( c( mat_pd ) )$bw
+    
+    # for each fcst quarter estimate density for each model ( columns in mat_pd ) with common knots
+    list_dens = apply( mat_pd, 2, function(x) bkde( x, bandwidth=comb_bw, range.x = comb_range ) )
+    
+    #collect densities
+    mat_dens_y = sapply( list_dens, function( d ) d[["y"]] )
+    dens_range = range( mat_dens_y )
+    dens_comb_ave = apply(mat_dens_y, 1, mean)
+    
+    list( x = list_dens[[1]]$x, y = dens_comb_ave )
+    
+    # # draw individual densities
+    # plot( NA, ylim = dens_range, xlim = comb_range, main = paste0("SIM density combination: ", t[1],"Q", t[2] ) )
+    # lapply( list_dens, function(d) lines( d$x, d$y ) )
+    # 
+    # # draw density combination ( average )
+    # lines( list_dens[[1]]$x, dens_comb_ave, col = 2, lwd = 2 )
+
 })
 
-comb_range = range( mat_pd )
-comb_bw    = density( c( mat_pd ) )$bw
+i = 107
 
-# for each fcst quarter estimate density for each model ( columns in mat_pd ) with common knots
-list_dens = apply( mat_pd, 2, function(x) bkde( x, bandwidth=comb_bw, range.x = comb_range ) )
-
-#collect densities
-mat_dens_y = sapply( list_dens, function( d ) d[["y"]] )
-dens_range = range( mat_dens_y )
-
-# draw individual densities
-plot( NA, ylim = dens_range, xlim = comb_range, main = paste0("SIM density combination: ", t[1],"Q", t[2] ) )
-lapply( list_dens, function(d) lines( d$x, d$y ) )
-
-# draw density combination ( average )
-lines( list_dens[[1]]$x, apply(mat_dens_y, 1, mean), col = 2, lwd = 2 )
-
+plot( NA, xlim = range( listBigCombDensAve[[i]]$x ), ylim = range( listBigCombDensAve[[i]]$y ) )
+lines( listBigCombDensAve[[i]]$x, listBigCombDensAve[[i]]$y, lty = 1, lwd = 2 )
 
 # lines( list_dens[[1]]$x, list_dens[[1]]$y )
 # lines( list_dens[[2]]$x, list_dens[[2]]$y )
